@@ -31,8 +31,10 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 
-#define STEERING_DEVICE_UUID "347b0001-7635-408b-8918-8ff3949ce592"
+#define STEERING_DEVICE_UUID     "347b0001-7635-408b-8918-8ff3949ce592"
 #define STEERING_ANGLE_CHAR_UUID "347b0030-7635-408b-8918-8ff3949ce592"  //notify
+#define STEERING_RX_CHAR_UUID    "347b0031-7635-408b-8918-8ff3949ce592"  //write
+#define STEERING_TX_CHAR_UUID    "347b0032-7635-408b-8918-8ff3949ce592"  //indicate
 /*
 //These charateristics are present on the Sterzo but aren't necessary for communication with Zwift
 #define STEERING_POWER_CHAR_UUID "347b0012-7635-408b-8918-8ff3949ce592"     //write
@@ -40,8 +42,6 @@
 #define STEERING_UNKNOWN3_CHAR_UUID "347b0014-7635-408b-8918-8ff3949ce592"  //value 0xFF, notify
 #define STEERING_UNKNOWN4_CHAR_UUID "347b0019-7635-408b-8918-8ff3949ce592"  //value x0FF, read
 */
-#define STEERING_RX_CHAR_UUID "347b0031-7635-408b-8918-8ff3949ce592"  //write
-#define STEERING_TX_CHAR_UUID "347b0032-7635-408b-8918-8ff3949ce592"  //indicate
 
 #define HANDSHAKE_DELAY 125
 #define DATA_DELAY 100
@@ -96,24 +96,57 @@ float readAngle() {
             return (float)((potVal / 25) - 80);
         }
     }
+}
 
-    // Simulation code:
-    // ====================
-    // unsigned long t = millis();
-    // double f = (double)t;
-    // f = f / 5000.0;
-    // float angle = (float)sin(f) * 40.0;
-    // return angle;
+void sendAngleToZwift(float angle) {
+    //Connected to Zwift so read the potentiometer and start transmitting the angle
+    Serial.print("Transmitting angle: ");
+    Serial.println(angle);
+    pAngle->setValue(angle);
+    pAngle->notify();
+    delay(DATA_DELAY);
+}
+
+void authenticateDevice() {
+    //Not connected to Zwift so start the connectin process
+    pTx->setValue(FF);
+    pTx->indicate();
+    //Do the handshaking
+    std::string rxValue = pRx->getValue();
+    if (rxValue.length() == 0) {
+        Serial.println("No data received");
+        delay(HANDSHAKE_DELAY);
+    } else {
+        Serial.print("Handshaking....");
+        if (rxValue[0] == 0x03 && rxValue[1] == 0x10) {
+            delay(HANDSHAKE_DELAY);
+            //send 0x0310FFFF (the last two octets can be anything)
+            pTx->setValue(authChallenge, 4);
+            pTx->indicate();
+            //Zwift will now send 4 bytes as a response, which start with 0x3111
+            //We don't really care what it is as long as we get a response
+            delay(HANDSHAKE_DELAY);
+            rxValue = pRx->getValue();
+            if (rxValue.length() == 4) {
+                //connected, so send 0x0311ff
+                delay(250);
+                pTx->setValue(authSuccess, 3);
+                pTx->indicate();
+                auth = true;
+                Serial.println("Success!");
+            }
+        }
+    }
 }
 
 void setup() {
     //setup pins for Pot
-    pinMode(POT,INPUT);
+    pinMode(POT, INPUT);
 
     Serial.begin(115200);
     //Setup BLE
     Serial.println("Creating BLE server...");
-    BLEDevice::init("STEERING");
+    BLEDevice::init("Gert's Stuur");
 
     // Create the BLE Server
     pServer = BLEDevice::createServer();
@@ -162,16 +195,17 @@ void setup() {
 void loop() {
     if (deviceConnected) {
         if (auth) {
-            sendAngleToZwift();
+            angle = readAngle();
+            sendAngleToZwift(angle);
         } else {
             authenticateDevice();
         }
-        delay(BLE_COOLDOWN_DELAY);  //small delay so BLW stack doesn't get overloaded
+        delay(BLE_COOLDOWN_DELAY);  //small delay so BLE stack doesn't get overloaded
     }
 
     // disconnecting
     if (!deviceConnected && oldDeviceConnected) {
-        delay(HANDSHAKE_DELAY *  2);  // give the bluetooth stack the chance to get things ready
+        delay(HANDSHAKE_DELAY * 2);   // give the bluetooth stack the chance to get things ready
         pServer->startAdvertising();  // restart advertising
         Serial.println("Nothing connected, start advertising");
         oldDeviceConnected = deviceConnected;
@@ -183,46 +217,4 @@ void loop() {
     }
     if (!deviceConnected) {
     }
-}
-
-void sendAngleToZwift() {
-  //Connected to Zwift so read the potentiometer and start transmitting the angle
-  angle = readAngle();
-  Serial.print("Transmitting angle: ");
-  Serial.println(angle);
-  pAngle->setValue(angle);
-  pAngle->notify();
-  delay(DATA_DELAY);
-}
-
-void authenticateDevice() {
-  //Not connected to Zwift so start the connectin process
-  pTx->setValue(FF);
-  pTx->indicate();
-  //Do the handshaking
-  std::string rxValue = pRx->getValue();
-  if (rxValue.length() == 0) {
-      Serial.println("No data received");
-      delay(HANDSHAKE_DELAY);
-  } else {
-      Serial.print("Handshaking....");
-      if (rxValue[0] == 0x03 && rxValue[1] == 0x10) {
-          delay(HANDSHAKE_DELAY);
-          //send 0x0310FFFF (the last two octets can be anything)
-          pTx->setValue(authChallenge, 4);
-          pTx->indicate();
-          //Zwift will now send 4 bytes as a response, which start with 0x3111
-          //We don't really care what it is as long as we get a response
-          delay(HANDSHAKE_DELAY);
-          rxValue = pRx->getValue();
-          if (rxValue.length() == 4) {
-              //connected, so send 0x0311ff
-              delay(250);
-              pTx->setValue(authSuccess, 3);
-              pTx->indicate();
-              auth = true;
-              Serial.println("Success!");
-          }
-      }
-  }
 }
