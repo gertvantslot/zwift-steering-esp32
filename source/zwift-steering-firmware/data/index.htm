@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en" class="h-100">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-BmbxuPwQa2lc/FVzBcNJ7UAyJxM6wuqIj61tLrc4wSX0szH/Ev+nYRRuWlolflfl" crossorigin="anonymous">
+
+  <title>Steering</title>
+</head>
+
+<body id="body" class="d-flex flex-column h-100">
+  <main class="flex-shrink-0">
+    <div class="container">
+      <div class="row">
+      <h1>Zwift Steering emulator</h1>
+       <h3>Angle: <span class="badge bg-secondary"><span id="info">0</span> °</span></h3>
+        <hr>
+      </div>
+      <div class="row">
+        <div class="column border border-info shadow" id="steer">
+          &nbsp;
+          <span class="bg-warning rounded-circle" id="indicator">&nbsp;&nbsp;&nbsp;</span>
+        </div>
+      </div>
+
+      <div class="card mt-4">
+        <h5 class="card-header">Help</h5>
+        <div class="card-body">
+          <p class="card-text">Move the mouse above the screen, or click (on mobile) to send a steering angle to Zwift.
+          </p>
+        </div>
+      </div>
+    </div>
+</div>
+  </main>
+  <footer class="footer mt-auto py-3 bg-light">
+    <div class="container">
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-b5kHyXgcpbZJO/tY9Ul7kGkf1S0CWuKcCD38l8YkeH8z8QjE0GmW1gYU5S9FOnJ0"
+    crossorigin="anonymous"></script>
+
+  <script>
+    var body = document.getElementById("body");
+    var indicator = document.getElementById("indicator");
+    var bar = document.getElementById("steer")
+    indicator.style.position = "absolute";
+
+    document.getElementById("body").addEventListener("mousemove", function (ev) {
+      // Calc angle
+      var width = body.clientWidth;
+      var x = ev.x - body.offsetLeft;
+      var angle = Math.round((x / width) * 80 - 40);
+
+      // Show indicator
+      var location = bar.offsetLeft + bar.clientWidth * ((angle + 40) / 80) - indicator.clientWidth / 2;
+      indicator.style.left = location + "px";
+      document.getElementById("info").innerText = angle;
+
+      // Send angle to server
+      var req = new XMLHttpRequest();
+      req.open("GET", "/angle/" + angle, true);
+      req.send();
+    });
+  </script>
+</body>
+
+</html>
