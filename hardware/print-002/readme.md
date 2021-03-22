@@ -3,9 +3,11 @@ Case 004 v5 - bottom.stl // Case 004 v6 - bottom.stl
 
 Samengevoegd tot `CE5P_Case 004.3mf`
 
-Doosje. Moet straks in de voet worden geïntegreerd.
+_Wat:_ Doosje. Moet straks in de voet worden geïntegreerd.
 
 Test print, om te zien of alles past.
+
+Nu Standard Quality.
 
 Swivel.stl // CE5P_Swivel.3mf
 =============================
@@ -20,4 +22,4 @@ Krachten: Door het wiel, voornamelijk vertikaal. Daarom Cubic infill gekozen.
 
 Nu ingesteld: Top & wall: 3mm. Infill 35%.
 
-Nu Standard Quality. Maar ik Low Quality gaat goed genoeg zijn.
+Nu Standard Quality. Maar ik denk dat Low Quality gaat goed genoeg zijn.
