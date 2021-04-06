@@ -53,22 +53,29 @@
     var bar = document.getElementById("steer")
     indicator.style.position = "absolute";
 
+    var angle = 0;
+
     document.getElementById("body").addEventListener("mousemove", function (ev) {
       // Calc angle
       var width = body.clientWidth;
       var x = ev.x - body.offsetLeft;
-      var angle = Math.round((x / width) * 80 - 40);
+      angle = Math.round((x / width) * 80 - 40);
 
+    });
+
+    window.setInterval(function() { 
       // Show indicator
       var location = bar.offsetLeft + bar.clientWidth * ((angle + 40) / 80) - indicator.clientWidth / 2;
       indicator.style.left = location + "px";
       document.getElementById("info").innerText = angle;
+    }, 250);
 
+    window.setInterval(function() { 
       // Send angle to server
       var req = new XMLHttpRequest();
       req.open("GET", "/angle/" + angle, true);
       req.send();
-    });
+    }, 500);
   </script>
 </body>
 
