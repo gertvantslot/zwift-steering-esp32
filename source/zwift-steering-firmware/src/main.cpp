@@ -34,6 +34,9 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 
+#include "settings.h"
+#include "calibrate.h"
+
 #define STEERING_DEVICE_UUID     "347b0001-7635-408b-8918-8ff3949ce592"
 #define STEERING_ANGLE_CHAR_UUID "347b0030-7635-408b-8918-8ff3949ce592"  //notify
 #define STEERING_RX_CHAR_UUID    "347b0031-7635-408b-8918-8ff3949ce592"  //write
@@ -44,8 +47,8 @@
 #define DELAY_BLE_COOLDOWN 100
 #define DELAY_BLINK 250
 
-#define POT A0
-
+// Channel to use for PWM 
+//  indicator on LED_BUILT_IN
 #define CH_INDICATOR 15
 
 // Timers
@@ -55,27 +58,22 @@ unsigned long timer_blink = 0;
 
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
-bool auth = false;
+bool authenticated = false;
 
 boolean error_angle = true;
 float angle = 0;
 const float angle_average = 250; // Number of measurements to average
+                                 // Higher = reduce noise, but slower steering
 
-// Define ANGLE_CALIBRATE to print the measured angle
-// to Serial
-#define xANGLE_CALIBRATE
+uint16_t angle_range = angle_max - angle_min;
 
-// Next 2 values are used for calibration 
-// Set to the raw value measured when steering to max left
-const uint16_t angle_min = 1024; // Value of potmeter, when minimum angle = -40°
-
-// Set to the raw value measured when steering to max right
-const uint16_t angle_max = 3096; // Value of potmeter, when maximum angle =  40°
-
-// Set to the value you want sent to swift, when steering to max right. 
-const float zwift_angle_sensitivity = 40.0; // Default = 40.0°;
-
-const uint16_t angle_range = angle_max - angle_min;
+#ifdef DEBUG_TO_SERIAL
+    #define pln(X) Serial.println(X)
+    #define p(X) Serial.print(X)
+#else
+    #define pln(X)
+    #define p(X)
+#endif
 
 #ifdef ANGLE_CALIBRATE
     // Minimum and maximum values, make sure they are overwritten on first pass
@@ -83,13 +81,16 @@ const uint16_t angle_range = angle_max - angle_min;
     uint16_t pot_measured_max = 0;
     float angle_measured_min = 180.0f;
     float angle_measured_max = -180;
+
+    unsigned long timer_calibrate = 0;
+    #define DELAY_CALIBRATE 5000
 #endif
 
 // define the return values to Zwift
 const float zwift_angle_min = -zwift_angle_sensitivity; 
 const float zwift_angle_max =  zwift_angle_sensitivity; 
 const float zwift_angle_range = zwift_angle_max - zwift_angle_min; // 40 - (-40) = 80
-const float zwift_angle_factor = zwift_angle_range / (float)angle_range;
+ float zwift_angle_factor = zwift_angle_range / (float)angle_range;
 
 int FF = 0xFF;
 uint8_t authChallenge[4] = {0x03, 0x10, 0xff, 0xff};
@@ -97,18 +98,9 @@ uint8_t authSuccess[3] = {0x03, 0x11, 0xff};
 
 BLEServer* pServer = NULL;
 BLECharacteristic* pAngle = NULL;
-/*
-//These charateristics are present on the Sterzo but aren't necessary for communication with Zwift
-BLECharacteristic* pPwr = NULL;
-BLECharacteristic* pU2 = NULL;
-BLECharacteristic* pU3 = NULL;
-BLECharacteristic* pU4 = NULL;
-*/
 BLECharacteristic* pRx = NULL;
 BLECharacteristic* pTx = NULL;
 
-//BLEAdvertisementData advert;
-//BLEAdvertisementData scan_response;
 BLEAdvertising* pAdvertising;
 
 class MyServerCallbacks : public BLEServerCallbacks {
@@ -125,10 +117,29 @@ float readAngle() {
     int potVal = analogRead(POT);
     float retVal = 0.0;
 
-    if (error_angle && potVal > angle_min) {
+    if (error_angle && potVal > angle_error) {
         // We have input
+        pln("Looks like the system is connected");
         error_angle = false;
     }
+
+    #ifdef AUTO_CALIBRATE
+
+    if (!error_angle) {
+        if (potVal < angle_min) {
+            angle_min--; // Decrease, but not too much (error measurements)
+            angle_range = angle_max - angle_min;
+            zwift_angle_factor = zwift_angle_range / (float)angle_range;
+            pln("AutoCalibrate: <<< Angle Min corrected");
+        }
+        if (potVal > angle_max) {
+            angle_max++;
+            angle_range = angle_max - angle_min;
+            zwift_angle_factor = zwift_angle_range / (float)angle_range;
+            pln("AutoCalibrate: >>> Angle Max corrected");
+        }
+    }
+    #endif
 
     if (potVal < angle_min) {
         retVal = zwift_angle_min;
@@ -140,32 +151,34 @@ float readAngle() {
         }
     }
 
+    retVal *= zwift_angle_direction;
+
     #ifdef ANGLE_CALIBRATE
 
-    if (potVal < pot_measured_min) pot_measured_min = potVal;
-    if (potVal > pot_measured_max) pot_measured_max = potVal;
-    if (retVal < angle_measured_min) angle_measured_min = retVal;
-    if (retVal > angle_measured_max) angle_measured_max = retVal;
+    if (millis() - timer_calibrate > DELAY_CALIBRATE) {
+        timer_calibrate = millis();
+        if (potVal < pot_measured_min) pot_measured_min = potVal;
+        if (potVal > pot_measured_max) pot_measured_max = potVal;
+        if (retVal < angle_measured_min) angle_measured_min = retVal;
+        if (retVal > angle_measured_max) angle_measured_max = retVal;
 
 
-    Serial.print("** ");
-    Serial.print(potVal);
-    Serial.print(" = ");
-    Serial.print(retVal);
-    // Serial.println();
+        p("** ");
+        p(potVal);
+        p(" = ");
+        p(retVal);
 
-    Serial.print("  - Minimum values: ");
-    Serial.print(pot_measured_min);
-    Serial.print(" - ");
-    Serial.print(angle_measured_min);
-    // Serial.println();
+        p("  - Minimum values: ");
+        p(pot_measured_min);
+        p(" - ");
+        p(angle_measured_min);
 
-    Serial.print("  - Maximum values: ");
-    Serial.print(pot_measured_max);
-    Serial.print(" - ");
-    Serial.print(angle_measured_max);
-    Serial.println();
-
+        p("  - Maximum values: ");
+        p(pot_measured_max);
+        p(" - ");
+        p(angle_measured_max);
+        pln();
+    }
     #endif
 
     return retVal;
@@ -177,7 +190,7 @@ void handleIndicatorLight() {
     }
     timer_blink = millis();
 
-    if (deviceConnected && auth) {
+    if (deviceConnected && authenticated) {
         if (error_angle) {
             // Do some blinking
             ledcWrite(CH_INDICATOR, 255 - ((millis() / DELAY_BLINK) % 4) * 24);
@@ -202,10 +215,10 @@ void authenticateDevice() {
     //Do the handshaking
     std::string rxValue = pRx->getValue();
     if (rxValue.length() == 0) {
-        Serial.println("No data received");
+        pln("No data received");
         delay(DELAY_HANDSHAKE);
     } else {
-        Serial.print("Handshaking....");
+        pln("Handshaking....");
         if (rxValue[0] == 0x03 && rxValue[1] == 0x10) {
             delay(DELAY_HANDSHAKE);
             //send 0x0310FFFF (the last two octets can be anything)
@@ -220,8 +233,8 @@ void authenticateDevice() {
                 delay(DELAY_HANDSHAKE2);
                 pTx->setValue(authSuccess, 3);
                 pTx->indicate();
-                auth = true;
-                Serial.println("Success!");
+                authenticated = true;
+                pln("Success!");
             }
         }
     }
@@ -233,22 +246,24 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
 
-    Serial.begin(115200);
+    #ifdef DEBUG_TO_SERIAL
+        Serial.begin(115200);
+    #endif
 
     //Setup BLE
-    Serial.println("Creating BLE server...");
-    BLEDevice::init("STUUR-GERT");
+    pln("Creating BLE server...");
+    BLEDevice::init(NAME);
 
     // Create the BLE Server
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
     // Create the BLE Service
-    Serial.println("Define service...");
+    pln("Define service...");
     BLEService* pService = pServer->createService(STEERING_DEVICE_UUID);
 
     // Create BLE Characteristics
-    Serial.println("Define characteristics");
+    pln("Define characteristics");
 
     pTx = pService->createCharacteristic(STEERING_TX_CHAR_UUID, BLECharacteristic::PROPERTY_INDICATE | BLECharacteristic::PROPERTY_READ);
     pTx->addDescriptor(new BLE2902());
@@ -258,19 +273,19 @@ void setup() {
     pAngle->addDescriptor(new BLE2902());
 
     // Start the service
-    Serial.println("Staring BLE service...");
+    pln("Staring BLE service...");
     pService->start();
 
     // Start advertising
     // Zwift only shows the steering button when the service is advertised
-    Serial.println("Define the advertiser...");
+    pln("Define the advertiser...");
     pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->setScanResponse(true);
     pAdvertising->addServiceUUID(STEERING_DEVICE_UUID);
     pAdvertising->setMinPreferred(0x06);  // set value to 0x00 to not advertise this parameter
-    Serial.println("Starting advertiser...");
+    pln("Starting advertiser...");
     BLEDevice::startAdvertising();
-    Serial.println("Waiting a client connection to notify...");
+    pln("Waiting a client connection to notify...");
 
     // Use LED_BUILTIN to give feedback
     ledcSetup(CH_INDICATOR, 5000, 8);
@@ -278,7 +293,6 @@ void setup() {
 }
 
 void loop() {
-
     // Read angle, reduce noise
     angle += (readAngle() - angle) / angle_average;
 
@@ -289,7 +303,7 @@ void loop() {
         timer_ble_cooldown = millis();
         
         if (deviceConnected) {
-            if (auth) {
+            if (authenticated) {
                 sendAngleToZwift(angle);
             } else {
                 authenticateDevice();
@@ -301,14 +315,12 @@ void loop() {
     if (!deviceConnected && oldDeviceConnected) {
         delay(DELAY_HANDSHAKE2);   // give the bluetooth stack the chance to get things ready
         pServer->startAdvertising();  // restart advertising
-        Serial.println("Nothing connected, start advertising");
+        pln("Nothing connected, start advertising");
         oldDeviceConnected = deviceConnected;
     }
     // connecting
     if (deviceConnected && !oldDeviceConnected) {
         oldDeviceConnected = deviceConnected;
-        Serial.println("Connecting...");
-    }
-    if (!deviceConnected) {
+        pln("Connecting...");
     }
 }
