@@ -60,12 +60,12 @@ bool deviceConnected = false;
 bool oldDeviceConnected = false;
 bool authenticated = false;
 
-boolean error_angle = true;
+boolean measurementsReceived = false;
 float angle = 0;
 const float angle_average = 250; // Number of measurements to average
                                  // Higher = reduce noise, but slower steering
 
-uint16_t angle_range = angle_max - angle_min;
+uint16_t potValue_range = potValue_max - potValue_min;
 
 #ifdef DEBUG_TO_SERIAL
     #define pln(X) Serial.println(X)
@@ -90,7 +90,7 @@ uint16_t angle_range = angle_max - angle_min;
 const float zwift_angle_min = -zwift_angle_sensitivity; 
 const float zwift_angle_max =  zwift_angle_sensitivity; 
 const float zwift_angle_range = zwift_angle_max - zwift_angle_min; // 40 - (-40) = 80
- float zwift_angle_factor = zwift_angle_range / (float)angle_range;
+float zwift_angle_factor = zwift_angle_range / (float)potValue_range;
 
 int FF = 0xFF;
 uint8_t authChallenge[4] = {0x03, 0x10, 0xff, 0xff};
@@ -117,40 +117,41 @@ float readAngle() {
     int potVal = analogRead(POT);
     float retVal = 0.0;
 
-    if (error_angle && potVal > angle_error) {
+    if (!measurementsReceived && potVal > potValue_error) {
         // We have input
         pln("Looks like the system is connected");
-        error_angle = false;
+        measurementsReceived = true;
     }
 
     #ifdef AUTO_CALIBRATE
 
-    if (!error_angle) {
-        if (potVal < angle_min) {
-            angle_min--; // Decrease, but not too much (error measurements)
-            angle_range = angle_max - angle_min;
-            zwift_angle_factor = zwift_angle_range / (float)angle_range;
+    if (measurementsReceived) {
+        if (potVal < potValue_min) {
+            potValue_min--; // Decrease, but not too much (error measurements)
+            potValue_range = potValue_max - potValue_min;
+            zwift_angle_factor = zwift_angle_range / (float)potValue_range;
             pln("AutoCalibrate: <<< Angle Min corrected");
         }
-        if (potVal > angle_max) {
-            angle_max++;
-            angle_range = angle_max - angle_min;
-            zwift_angle_factor = zwift_angle_range / (float)angle_range;
+        if (potVal > potValue_max) {
+            potValue_max++;
+            potValue_range = potValue_max - potValue_min;
+            zwift_angle_factor = zwift_angle_range / (float)potValue_range;
             pln("AutoCalibrate: >>> Angle Max corrected");
         }
     }
     #endif
 
-    if (potVal < angle_min) {
+    if (potVal < potValue_min) {
         retVal = zwift_angle_min;
     } else {
-        if (potVal > angle_max) {
+        if (potVal > potValue_max) {
             retVal = zwift_angle_max;
         } else {
-            retVal = zwift_angle_min + (potVal - angle_min) * zwift_angle_factor;
+            retVal = zwift_angle_min + (potVal - potValue_min) * zwift_angle_factor;
         }
     }
 
+    // Correct for direction
     retVal *= zwift_angle_direction;
 
     #ifdef ANGLE_CALIBRATE
@@ -161,7 +162,6 @@ float readAngle() {
         if (potVal > pot_measured_max) pot_measured_max = potVal;
         if (retVal < angle_measured_min) angle_measured_min = retVal;
         if (retVal > angle_measured_max) angle_measured_max = retVal;
-
 
         p("** ");
         p(potVal);
@@ -191,7 +191,7 @@ void handleIndicatorLight() {
     timer_blink = millis();
 
     if (deviceConnected && authenticated) {
-        if (error_angle) {
+        if (!measurementsReceived) {
             // Do some blinking
             ledcWrite(CH_INDICATOR, 255 - ((millis() / DELAY_BLINK) % 4) * 24);
         } else {
